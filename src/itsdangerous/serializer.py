@@ -303,7 +303,7 @@ class Serializer(t.Generic[_TSerialized]):
             else:
                 kwargs = self.signer_kwargs
 
-            for secret_key in self.secret_keys:
+            for secret_key in reversed(self.secret_keys):
                 yield fallback(secret_key, salt=salt, **kwargs)
 
     def dumps(self, obj: t.Any, salt: str | bytes | None = None) -> _TSerialized:
