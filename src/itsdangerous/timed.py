@@ -179,14 +179,13 @@ class TimedSerializer(Serializer[_TSerialized]):
     ) -> cabc.Iterator[TimestampSigner]:
         return t.cast("cabc.Iterator[TimestampSigner]", super().iter_unsigners(salt))
 
-    # TODO: Signature is incompatible because parameters were added
-    #  before salt.
-
     def loads(  # type: ignore[override]
         self,
         s: str | bytes,
-        max_age: int | None = None,
+        max_age_or_salt: int | str | bytes | None = None,
         return_timestamp: bool = False,
+        *,
+        max_age: int | None = None,
         salt: str | bytes | None = None,
     ) -> t.Any:
         """Reverse of :meth:`dumps`, raises :exc:`.BadSignature` if the
@@ -195,8 +194,33 @@ class TimedSerializer(Serializer[_TSerialized]):
         case the signature is outdated, :exc:`.SignatureExpired` is
         raised. All arguments are forwarded to the signer's
         :meth:`~TimestampSigner.unsign` method.
+
+        For compatibility with :meth:`.Serializer.loads`, a ``str`` or
+        ``bytes`` value passed as the second positional argument is
+        treated as ``salt`` rather than ``max_age``. Both ``max_age``
+        and ``salt`` may also be passed as keyword arguments.
         """
         s = want_bytes(s)
+
+        if isinstance(max_age_or_salt, (str, bytes)):
+            if salt is not None:
+                raise TypeError(
+                    "Cannot pass a salt as both the second positional"
+                    " argument and the 'salt' keyword"
+                    " argument."
+                )
+
+            salt = max_age_or_salt
+        elif max_age_or_salt is not None:
+            if max_age is not None:
+                raise TypeError(
+                    "Cannot pass 'max_age' as both the second positional"
+                    " argument and a keyword"
+                    " argument."
+                )
+
+            max_age = max_age_or_salt
+
         last_exception = None
 
         for signer in self.iter_unsigners(salt):
@@ -222,7 +246,28 @@ class TimedSerializer(Serializer[_TSerialized]):
     def loads_unsafe(  # type: ignore[override]
         self,
         s: str | bytes,
+        max_age_or_salt: int | str | bytes | None = None,
+        *,
         max_age: int | None = None,
         salt: str | bytes | None = None,
     ) -> tuple[bool, t.Any]:
+        if isinstance(max_age_or_salt, (str, bytes)):
+            if salt is not None:
+                raise TypeError(
+                    "Cannot pass a salt as both the second positional"
+                    " argument and the 'salt' keyword"
+                    " argument."
+                )
+
+            salt = max_age_or_salt
+        elif max_age_or_salt is not None:
+            if max_age is not None:
+                raise TypeError(
+                    "Cannot pass 'max_age' as both the second positional"
+                    " argument and a keyword"
+                    " argument."
+                )
+
+            max_age = max_age_or_salt
+
         return self._loads_unsafe_impl(s, salt, load_kwargs={"max_age": max_age})

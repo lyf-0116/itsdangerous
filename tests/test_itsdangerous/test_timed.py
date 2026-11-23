@@ -113,3 +113,42 @@ class TestTimedSerializer(FreezeMixin, TestSerializer):
     def test_return_payload(self, serializer, value, ts):
         signed = serializer.dumps(value)
         assert serializer.loads(signed, return_timestamp=True) == (value, ts)
+
+    def test_positional_salt(self, serializer, value):
+        # The base Serializer.loads takes salt as its second positional
+        # argument. A str or bytes value must be dispatched as salt.
+        signed = serializer.dumps(value, salt="other")
+
+        with pytest.raises(BadTimeSignature):
+            serializer.loads(signed)
+
+        assert serializer.loads(signed, "other") == value
+
+    def test_positional_max_age(self, serializer, value, ts, freeze):
+        # Existing callers pass max_age as the second positional argument.
+        signed = serializer.dumps(value)
+        freeze.tick()
+        assert serializer.loads(signed, 10) == value
+        freeze.tick(timedelta(seconds=10))
+
+        with pytest.raises(SignatureExpired):
+            serializer.loads(signed, 10)
+
+    def test_positional_salt_and_keyword_max_age(self, serializer, value, freeze):
+        signed = serializer.dumps(value, salt="other")
+        freeze.tick()
+        assert serializer.loads(signed, "other", max_age=10) == value
+        freeze.tick(timedelta(seconds=10))
+
+        with pytest.raises(SignatureExpired):
+            serializer.loads(signed, "other", max_age=10)
+
+    def test_duplicate_salt(self, serializer, value):
+        signed = serializer.dumps(value, salt="other")
+
+        with pytest.raises(TypeError):
+            serializer.loads(signed, "other", salt="other")
+
+    def test_loads_unsafe_positional_salt(self, serializer, value):
+        signed = serializer.dumps(value, salt="other")
+        assert serializer.loads_unsafe(signed, "other") == (True, value)

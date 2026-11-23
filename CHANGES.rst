@@ -5,6 +5,11 @@ Unreleased
 
 -   Drop support for Python 3.8 and 3.9.
 -   Remove previously deprecated code.
+-   ``TimedSerializer.loads`` and ``loads_unsafe`` treat a ``str`` or
+    ``bytes`` second positional argument as ``salt``, matching
+    ``Serializer.loads``. An ``int`` positional argument continues to be
+    treated as ``max_age`` for backwards compatibility. Pass ``max_age``
+    and ``salt`` as keyword arguments to use both at once.
 
 
 Version 2.2.0
