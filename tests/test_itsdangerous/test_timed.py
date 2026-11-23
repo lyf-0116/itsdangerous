@@ -6,6 +6,8 @@ from functools import partial
 import pytest
 from freezegun import freeze_time
 
+from itsdangerous.encoding import base64_encode
+from itsdangerous.encoding import int_to_bytes
 from itsdangerous.exc import BadTimeSignature
 from itsdangerous.exc import SignatureExpired
 from itsdangerous.signer import Signer
@@ -55,6 +57,32 @@ class TestTimestampSigner(FreezeMixin, TestSigner):
 
         assert "missing" in str(exc_info.value)
         assert exc_info.value.date_signed is None
+
+    def test_timestamp_marker_required(self, signer):
+        # A regular Signer shares the derived key, so its output verifies
+        # cryptographically. Without the timestamp marker it must not be
+        # accepted as a timestamped signature, otherwise the last segment
+        # would be trusted as a forged signing time.
+        other = Signer("secret-key")
+        forged_timestamp = base64_encode(int_to_bytes(1_700_000_000))
+        signed = other.sign(b"value." + forged_timestamp)
+
+        with pytest.raises(BadTimeSignature) as exc_info:
+            signer.unsign(signed)
+
+        assert "missing" in str(exc_info.value)
+        assert exc_info.value.date_signed is None
+        assert not signer.validate(signed)
+        assert not signer.validate(signed, max_age=10)
+
+    def test_timestamp_marker_is_signed(self, signer):
+        signed = signer.sign("value")
+        tampered = signed.replace(b".t~", b".x~", 1)
+
+        with pytest.raises(BadTimeSignature):
+            signer.unsign(tampered)
+
+        assert not signer.validate(tampered)
 
     def test_malformed_timestamp(self, signer):
         other = Signer("secret-key")

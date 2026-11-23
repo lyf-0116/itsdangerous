@@ -26,6 +26,14 @@ class TimestampSigner(Signer):
     unsigning failed because the signature is expired.
     """
 
+    #: Marker prepended to the encoded timestamp segment so that a value
+    #: produced by a regular :class:`.Signer`, which shares the same
+    #: derived key and wire format, cannot be reinterpreted as a
+    #: timestamped signature with a forged timestamp. The marker is part
+    #: of the signed value, so it cannot be added without a valid
+    #: signature.
+    timestamp_marker: bytes = b"t~"
+
     def get_timestamp(self) -> int:
         """Returns the current timestamp. The function must return an
         integer.
@@ -45,7 +53,9 @@ class TimestampSigner(Signer):
     def sign(self, value: str | bytes) -> bytes:
         """Signs the given string and also attaches time information."""
         value = want_bytes(value)
-        timestamp = base64_encode(int_to_bytes(self.get_timestamp()))
+        timestamp = self.timestamp_marker + base64_encode(
+            int_to_bytes(self.get_timestamp())
+        )
         sep = want_bytes(self.sep)
         value = value + sep + timestamp
         return value + sep + self.get_signature(value)
@@ -108,9 +118,15 @@ class TimestampSigner(Signer):
         value, ts_bytes = result.rsplit(sep, 1)
         ts_int: int | None = None
         ts_dt: datetime | None = None
+        has_marker = ts_bytes.startswith(self.timestamp_marker)
 
         try:
-            ts_int = bytes_to_int(base64_decode(ts_bytes))
+            timestamp_data = ts_bytes
+
+            if has_marker:
+                timestamp_data = timestamp_data[len(self.timestamp_marker) :]
+
+            ts_int = bytes_to_int(base64_decode(timestamp_data))
         except Exception:
             pass
 
@@ -133,6 +149,13 @@ class TimestampSigner(Signer):
         # malformed. Should not happen, but we handle it anyway.
         if ts_int is None:
             raise BadTimeSignature("Malformed timestamp", payload=value)
+
+        # The signature was okay and the timestamp segment parses, but
+        # it does not carry the timestamp marker. The value was produced
+        # by a non-timestamp signer, so the number cannot be trusted as
+        # a signing time even though the signature itself verifies.
+        if not has_marker:
+            raise BadTimeSignature("timestamp missing", payload=result)
 
         # Check timestamp is not older than max_age
         if max_age is not None:

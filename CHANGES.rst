@@ -5,6 +5,10 @@ Unreleased
 
 -   Drop support for Python 3.8 and 3.9.
 -   Remove previously deprecated code.
+-   ``TimestampSigner`` marks the timestamp segment with a ``t~`` prefix so
+    that a value signed by the non-timestamped ``Signer``, which derives the
+    same key and uses the same wire format, can no longer be accepted as a
+    timestamped signature with a forged signing time.
 
 
 Version 2.2.0
