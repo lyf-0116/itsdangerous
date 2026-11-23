@@ -224,5 +224,5 @@ class TimedSerializer(Serializer[_TSerialized]):
         s: str | bytes,
         max_age: int | None = None,
         salt: str | bytes | None = None,
-    ) -> tuple[bool, t.Any]:
+    ) -> tuple[bool | type[BadSignature], t.Any]:
         return self._loads_unsafe_impl(s, salt, load_kwargs={"max_age": max_age})

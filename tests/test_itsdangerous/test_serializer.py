@@ -92,11 +92,17 @@ class TestSerializer:
         assert serializer.loads_unsafe(signed) == (True, value)
 
         bad_signed = signed[:-1]
-        assert serializer.loads_unsafe(bad_signed) == (False, value)
+        sig_okay, unsafe_value = serializer.loads_unsafe(bad_signed)
+        assert isinstance(sig_okay, type) and issubclass(sig_okay, BadSignature)
+        assert unsafe_value == value
+        # Exception classes are truthy, so a boolean check still works.
+        assert bool(sig_okay)
 
         payload = signed.rsplit(coerce_str(signed, "."), 1)[0]  # type: ignore
         bad_payload = serializer.make_signer().sign(payload[:-1])[:-1]
-        assert serializer.loads_unsafe(bad_payload) == (False, None)
+        sig_okay, unsafe_value = serializer.loads_unsafe(bad_payload)
+        assert issubclass(sig_okay, BadSignature)
+        assert unsafe_value is None
 
         class BadUnsign(serializer.signer):  # type: ignore
             def unsign(self, signed_value, *args, **kwargs):
@@ -107,7 +113,14 @@ class TestSerializer:
                     raise
 
         serializer.signer = BadUnsign
-        assert serializer.loads_unsafe(bad_signed) == (False, None)
+        sig_okay, unsafe_value = serializer.loads_unsafe(bad_signed)
+        assert issubclass(sig_okay, BadSignature)
+        assert unsafe_value is None
+
+    def test_loads_unsafe_never_raises(self, serializer: Serializer):
+        sig_okay, unsafe_value = serializer.loads_unsafe("garbage")
+        assert issubclass(sig_okay, BadSignature)
+        assert unsafe_value is None
 
     def test_file(self, serializer: Serializer, value: Any):
         f = cast(

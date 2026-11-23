@@ -113,3 +113,20 @@ class TestTimedSerializer(FreezeMixin, TestSerializer):
     def test_return_payload(self, serializer, value, ts):
         signed = serializer.dumps(value)
         assert serializer.loads(signed, return_timestamp=True) == (value, ts)
+
+    def test_loads_unsafe_expired(self, serializer, value, freeze):
+        signed = serializer.dumps(value)
+        freeze.tick()
+        assert serializer.loads_unsafe(signed, max_age=10) == (True, value)
+        freeze.tick(timedelta(seconds=10))
+
+        # The data is authentic but expired: the failure reason is
+        # distinguishable from a tampered signature via the first item.
+        assert serializer.loads_unsafe(signed, max_age=10) == (
+            SignatureExpired,
+            value,
+        )
+        assert serializer.loads_unsafe(signed[:-1], max_age=10) == (
+            BadTimeSignature,
+            value,
+        )

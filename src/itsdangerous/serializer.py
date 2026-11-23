@@ -348,12 +348,19 @@ class Serializer(t.Generic[_TSerialized]):
 
     def loads_unsafe(
         self, s: str | bytes, salt: str | bytes | None = None
-    ) -> tuple[bool, t.Any]:
+    ) -> tuple[bool | type[BadSignature], t.Any]:
         """Like :meth:`loads` but without verifying the signature. This
         is potentially very dangerous to use depending on how your
         serializer works. The return value is ``(signature_valid,
-        payload)`` instead of just the payload. The first item will be a
-        boolean that indicates if the signature is valid. This function
+        payload)`` instead of just the payload. The first item will be
+        ``True`` if the signature is valid. If it is not valid, it will
+        be the type of the :exc:`.BadSignature` that was raised, which
+        makes it possible to tell why validation failed. For example, a
+        timed serializer returns :exc:`.SignatureExpired` when the
+        signature was valid but has expired, and another
+        :exc:`.BadSignature` subclass when the data was tampered with.
+        Since exception classes are always truthy, code that only checks
+        the truthiness of the first item keeps working. This function
         never fails.
 
         Use it for debugging only and if you know that your serializer
@@ -361,6 +368,10 @@ class Serializer(t.Generic[_TSerialized]):
         pickle serializer).
 
         .. versionadded:: 0.15
+        .. versionchanged:: 2.3.0
+            The first item is the raised exception class instead of
+            ``False`` when the signature is invalid, so that different
+            failure reasons can be distinguished.
         """
         return self._loads_unsafe_impl(s, salt)
 
@@ -370,7 +381,7 @@ class Serializer(t.Generic[_TSerialized]):
         salt: str | bytes | None,
         load_kwargs: dict[str, t.Any] | None = None,
         load_payload_kwargs: dict[str, t.Any] | None = None,
-    ) -> tuple[bool, t.Any]:
+    ) -> tuple[bool | type[BadSignature], t.Any]:
         """Low level helper function to implement :meth:`loads_unsafe`
         in serializer subclasses.
         """
@@ -381,22 +392,22 @@ class Serializer(t.Generic[_TSerialized]):
             return True, self.loads(s, salt=salt, **load_kwargs)
         except BadSignature as e:
             if e.payload is None:
-                return False, None
+                return type(e), None
 
             if load_payload_kwargs is None:
                 load_payload_kwargs = {}
 
             try:
                 return (
-                    False,
+                    type(e),
                     self.load_payload(e.payload, **load_payload_kwargs),
                 )
             except BadPayload:
-                return False, None
+                return type(e), None
 
     def load_unsafe(
         self, f: t.IO[t.Any], salt: str | bytes | None = None
-    ) -> tuple[bool, t.Any]:
+    ) -> tuple[bool | type[BadSignature], t.Any]:
         """Like :meth:`loads_unsafe` but loads from a file.
 
         .. versionadded:: 0.15

@@ -70,8 +70,14 @@ wrong you can also use :meth:`~Serializer.loads_unsafe`:
 
     sig_okay, payload = s.loads_unsafe(data)
 
-The first item in the returned tuple is a boolean that indicates if the
-signature was correct.
+The first item in the returned tuple is ``True`` if the signature was
+correct. If it was not, it is the class of the :exc:`.BadSignature`
+exception that was raised instead of a plain ``False``. This makes it
+possible to tell different failures apart: a
+:class:`~itsdangerous.exc.SignatureExpired` means the data was authentic
+but is too old, while another :exc:`.BadSignature` subclass means the
+data was tampered with. Exception classes are always truthy, so code
+that only checks ``if sig_okay:`` keeps working.
 
 
 Fallback Signers

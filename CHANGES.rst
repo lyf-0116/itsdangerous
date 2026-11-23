@@ -5,6 +5,12 @@ Unreleased
 
 -   Drop support for Python 3.8 and 3.9.
 -   Remove previously deprecated code.
+-   The first value returned by ``Serializer.loads_unsafe`` and
+    ``load_unsafe`` is the raised ``BadSignature`` exception class
+    instead of ``False`` when the signature is invalid. This
+    distinguishes an expired ``SignatureExpired`` signature from data
+    that was tampered with, while exception classes remain truthy so
+    existing boolean checks keep working.
 
 
 Version 2.2.0
