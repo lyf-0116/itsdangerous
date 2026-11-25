@@ -33,6 +33,8 @@ def coerce_str(ref: str | bytes, s: str) -> str | bytes:
 
 
 class TestSerializer:
+    load_kwargs: dict[str, Any] = {}
+
     @pytest.fixture(params=(Serializer, partial(Serializer, serializer=pickle)))
     def serializer_factory(self, request):
         return partial(request.param, secret_key="secret_key")
@@ -45,11 +47,19 @@ class TestSerializer:
     def value(self):
         return {"id": 42}
 
+    def load(self, serializer: Serializer, s: str | bytes, **kwargs: Any) -> Any:
+        return serializer.loads(s, **self.load_kwargs, **kwargs)
+
+    def load_unsafe(
+        self, serializer: Serializer, s: str | bytes, **kwargs: Any
+    ) -> tuple[bool, Any]:
+        return serializer.loads_unsafe(s, **self.load_kwargs, **kwargs)
+
     @pytest.mark.parametrize(
         "value", (None, True, "str", "text", [1, 2, 3], {"id": 42})
     )
     def test_serializer(self, serializer: Serializer, value: Any):
-        assert serializer.loads(serializer.dumps(value)) == value
+        assert self.load(serializer, serializer.dumps(value)) == value
 
     @pytest.mark.parametrize(
         "transform",
@@ -62,20 +72,19 @@ class TestSerializer:
     )
     def test_changed_value(self, serializer: Serializer, value: Any, transform):
         signed = serializer.dumps(value)
-        assert serializer.loads(signed) == value
+        assert self.load(serializer, signed) == value
         changed = transform(signed)
 
         with pytest.raises(BadSignature):
-            serializer.loads(changed)
+            self.load(serializer, changed)
 
     def test_bad_signature_exception(self, serializer: Serializer, value: Any):
         bad_signed = serializer.dumps(value)[:-1]
 
         with pytest.raises(BadSignature) as exc_info:
-            serializer.loads(bad_signed)
+            self.load(serializer, bad_signed)
 
-        payload = cast(bytes, exc_info.value.payload)
-        assert serializer.load_payload(payload) == value
+        assert not hasattr(exc_info.value, "payload")
 
     def test_bad_payload_exception(self, serializer: Serializer, value: Any):
         original = serializer.dumps(value)
@@ -83,31 +92,27 @@ class TestSerializer:
         bad = serializer.make_signer().sign(payload[:-1])
 
         with pytest.raises(BadPayload) as exc_info:
-            serializer.loads(bad)
+            self.load(serializer, bad)
 
         assert exc_info.value.original_error is not None
 
     def test_loads_unsafe(self, serializer: Serializer, value: Any):
         signed = serializer.dumps(value)
-        assert serializer.loads_unsafe(signed) == (True, value)
+        assert self.load_unsafe(serializer, signed) == (True, value)
 
         bad_signed = signed[:-1]
-        assert serializer.loads_unsafe(bad_signed) == (False, value)
+        assert self.load_unsafe(serializer, bad_signed) == (False, value)
 
         payload = signed.rsplit(coerce_str(signed, "."), 1)[0]  # type: ignore
         bad_payload = serializer.make_signer().sign(payload[:-1])[:-1]
-        assert serializer.loads_unsafe(bad_payload) == (False, None)
+        assert self.load_unsafe(serializer, bad_payload) == (False, None)
 
         class BadUnsign(serializer.signer):  # type: ignore
             def unsign(self, signed_value, *args, **kwargs):
-                try:
-                    return super().unsign(signed_value, *args, **kwargs)
-                except BadSignature as e:
-                    e.payload = None
-                    raise
+                raise BadSignature("bad signature")
 
         serializer.signer = BadUnsign
-        assert serializer.loads_unsafe(bad_signed) == (False, None)
+        assert self.load_unsafe(serializer, bad_signed) == (False, value)
 
     def test_file(self, serializer: Serializer, value: Any):
         f = cast(
@@ -115,31 +120,31 @@ class TestSerializer:
         )
         serializer.dump(value, f)
         f.seek(0)
-        assert serializer.load(f) == value
+        assert serializer.load(f, **self.load_kwargs) == value
         f.seek(0)
-        assert serializer.load_unsafe(f) == (True, value)
+        assert serializer.load_unsafe(f, **self.load_kwargs) == (True, value)
 
     def test_alt_salt(self, serializer: Serializer, value: Any):
         signed = serializer.dumps(value, salt="other")
 
         with pytest.raises(BadSignature):
-            serializer.loads(signed)
+            self.load(serializer, signed)
 
-        assert serializer.loads(signed, salt="other") == value
+        assert self.load(serializer, signed, salt="other") == value
 
     def test_signer_cls(self, serializer_factory, serializer: Serializer, value: Any):
         class Other(serializer.signer):  # type: ignore
             default_key_derivation = "hmac"
 
         other = serializer_factory(signer=Other)
-        assert other.loads(other.dumps(value)) == value
+        assert self.load(other, other.dumps(value)) == value
         assert other.dumps(value) != serializer.dumps(value)
 
     def test_signer_kwargs(
         self, serializer_factory, serializer: Serializer, value: Any
     ):
         other = serializer_factory(signer_kwargs={"key_derivation": "hmac"})
-        assert other.loads(other.dumps(value)) == value
+        assert self.load(other, other.dumps(value)) == value
         assert other.dumps("value") != serializer.dumps("value")
 
     def test_serializer_kwargs(self, serializer_factory):
@@ -150,7 +155,7 @@ class TestSerializer:
         except TypeError:
             return
 
-        assert serializer.loads(serializer.dumps({(): 1})) == {}
+        assert self.load(serializer, serializer.dumps({(): 1})) == {}
 
     def test_fallback_signers(self, serializer_factory, value: Any):
         serializer = serializer_factory(signer_kwargs={"digest_method": hashlib.sha256})
@@ -161,7 +166,7 @@ class TestSerializer:
             fallback_signers=[{"digest_method": hashlib.sha256}],
         )
 
-        assert fallback_serializer.loads(signed) == value
+        assert self.load(fallback_serializer, signed) == value
 
     def test_iter_unsigners(self, serializer: Serializer, serializer_factory):
         class Signer256(serializer.signer):  # type: ignore

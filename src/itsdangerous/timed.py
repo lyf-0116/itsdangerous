@@ -24,6 +24,9 @@ class TimestampSigner(Signer):
     of the signing and can be used to expire signatures. The
     :meth:`unsign` method can raise :exc:`.SignatureExpired` if the
     unsigning failed because the signature is expired.
+
+    Unlike the regular :class:`.Signer`, a maximum age is required when
+    unsigning so that signed values cannot be accepted indefinitely.
     """
 
     def get_timestamp(self) -> int:
@@ -50,14 +53,22 @@ class TimestampSigner(Signer):
         value = value + sep + timestamp
         return value + sep + self.get_signature(value)
 
+    def _extract_unsafe_payload(self, signed_value: str | bytes) -> bytes | None:
+        value = super()._extract_unsafe_payload(signed_value)
+
+        if value is None or self.sep not in value:
+            return None
+
+        return value.rsplit(self.sep, 1)[0]
+
     # Ignore overlapping signatures check, return_timestamp is the only
     # parameter that affects the return type.
 
-    @t.overload
+    @t.overload  # type: ignore[override]
     def unsign(  # pyright: ignore
         self,
         signed_value: str | bytes,
-        max_age: int | None = None,
+        max_age: int,
         return_timestamp: t.Literal[False] = False,
     ) -> bytes: ...
 
@@ -65,34 +76,46 @@ class TimestampSigner(Signer):
     def unsign(
         self,
         signed_value: str | bytes,
-        max_age: int | None = None,
+        max_age: int,
         return_timestamp: t.Literal[True] = True,
     ) -> tuple[bytes, datetime]: ...
 
-    def unsign(
+    def unsign(  # pyright: ignore[reportIncompatibleMethodOverride]
         self,
         signed_value: str | bytes,
-        max_age: int | None = None,
+        max_age: int,
         return_timestamp: bool = False,
     ) -> tuple[bytes, datetime] | bytes:
         """Works like the regular :meth:`.Signer.unsign` but can also
-        validate the time. See the base docstring of the class for
-        the general behavior. If ``return_timestamp`` is ``True`` the
-        timestamp of the signature will be returned as an aware
-        :class:`datetime.datetime` object in UTC.
+        validate the time. A ``max_age`` in seconds is required. See the
+        base docstring of the class for the general behavior. If
+        ``return_timestamp`` is ``True`` the timestamp of the signature
+        will be returned as an aware :class:`datetime.datetime` object
+        in UTC.
 
         .. versionchanged:: 2.0
             The timestamp is returned as a timezone-aware ``datetime``
             in UTC rather than a naive ``datetime`` assumed to be UTC.
+
+        .. versionchanged:: 2.3.0
+            The ``max_age`` argument is required.
         """
+        if max_age is None:
+            raise TypeError("max_age is required")
+
+        signed_value = want_bytes(signed_value)
+        sep = want_bytes(self.sep)
+
         try:
             result = super().unsign(signed_value)
             sig_error = None
         except BadSignature as e:
             sig_error = e
-            result = e.payload or b""
 
-        sep = want_bytes(self.sep)
+            if sep not in signed_value:
+                raise
+
+            result = signed_value.rsplit(sep, 1)[0]
 
         # If there is no timestamp in the result there is something
         # seriously wrong. In case there was a signature error, we raise
@@ -103,7 +126,7 @@ class TimestampSigner(Signer):
             if sig_error:
                 raise sig_error
 
-            raise BadTimeSignature("timestamp missing", payload=result)
+            raise BadTimeSignature("timestamp missing")
 
         value, ts_bytes = result.rsplit(sep, 1)
         ts_int: int | None = None
@@ -123,41 +146,38 @@ class TimestampSigner(Signer):
                 except (ValueError, OSError, OverflowError) as exc:
                     # Windows raises OSError
                     # 32-bit raises OverflowError
-                    raise BadTimeSignature(
-                        "Malformed timestamp", payload=value
-                    ) from exc
+                    raise BadTimeSignature("Malformed timestamp") from exc
 
-            raise BadTimeSignature(str(sig_error), payload=value, date_signed=ts_dt)
+            raise BadTimeSignature(str(sig_error), date_signed=ts_dt)
 
         # Signature was okay but the timestamp is actually not there or
         # malformed. Should not happen, but we handle it anyway.
         if ts_int is None:
-            raise BadTimeSignature("Malformed timestamp", payload=value)
+            raise BadTimeSignature("Malformed timestamp")
 
         # Check timestamp is not older than max_age
-        if max_age is not None:
-            age = self.get_timestamp() - ts_int
+        age = self.get_timestamp() - ts_int
 
-            if age > max_age:
-                raise SignatureExpired(
-                    f"Signature age {age} > {max_age} seconds",
-                    payload=value,
-                    date_signed=self.timestamp_to_datetime(ts_int),
-                )
+        if age > max_age:
+            raise SignatureExpired(
+                f"Signature age {age} > {max_age} seconds",
+                date_signed=self.timestamp_to_datetime(ts_int),
+            )
 
-            if age < 0:
-                raise SignatureExpired(
-                    f"Signature age {age} < 0 seconds",
-                    payload=value,
-                    date_signed=self.timestamp_to_datetime(ts_int),
-                )
+        if age < 0:
+            raise SignatureExpired(
+                f"Signature age {age} < 0 seconds",
+                date_signed=self.timestamp_to_datetime(ts_int),
+            )
 
         if return_timestamp:
             return value, self.timestamp_to_datetime(ts_int)
 
         return value
 
-    def validate(self, signed_value: str | bytes, max_age: int | None = None) -> bool:
+    def validate(  # type: ignore[override]  # pyright: ignore[reportIncompatibleMethodOverride]
+        self, signed_value: str | bytes, max_age: int
+    ) -> bool:
         """Only validates the given signed value. Returns ``True`` if
         the signature exists and is valid."""
         try:
@@ -185,16 +205,19 @@ class TimedSerializer(Serializer[_TSerialized]):
     def loads(  # type: ignore[override]
         self,
         s: str | bytes,
-        max_age: int | None = None,
+        max_age: int,
         return_timestamp: bool = False,
         salt: str | bytes | None = None,
     ) -> t.Any:
         """Reverse of :meth:`dumps`, raises :exc:`.BadSignature` if the
-        signature validation fails. If a ``max_age`` is provided it will
-        ensure the signature is not older than that time in seconds. In
-        case the signature is outdated, :exc:`.SignatureExpired` is
-        raised. All arguments are forwarded to the signer's
+        signature validation fails. The required ``max_age`` ensures the
+        signature is not older than that time in seconds. If the
+        signature is outdated, :exc:`.SignatureExpired` is raised. All
+        arguments are forwarded to the signer's
         :meth:`~TimestampSigner.unsign` method.
+
+        .. versionchanged:: 2.3.0
+            The ``max_age`` argument is required.
         """
         s = want_bytes(s)
         last_exception = None
@@ -222,7 +245,25 @@ class TimedSerializer(Serializer[_TSerialized]):
     def loads_unsafe(  # type: ignore[override]
         self,
         s: str | bytes,
-        max_age: int | None = None,
+        max_age: int,
         salt: str | bytes | None = None,
     ) -> tuple[bool, t.Any]:
         return self._loads_unsafe_impl(s, salt, load_kwargs={"max_age": max_age})
+
+    def load(  # type: ignore[override]
+        self,
+        f: t.IO[t.Any],
+        max_age: int,
+        salt: str | bytes | None = None,
+    ) -> t.Any:
+        """Like :meth:`loads` but loads from a file."""
+        return self.loads(f.read(), max_age, salt=salt)
+
+    def load_unsafe(  # type: ignore[override]
+        self,
+        f: t.IO[t.Any],
+        max_age: int,
+        salt: str | bytes | None = None,
+    ) -> tuple[bool, t.Any]:
+        """Like :meth:`loads_unsafe` but loads from a file."""
+        return self.loads_unsafe(f.read(), max_age, salt=salt)

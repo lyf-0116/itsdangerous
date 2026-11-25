@@ -253,7 +253,19 @@ class Signer:
         if self.verify_signature(value, sig):
             return value
 
-        raise BadSignature(f"Signature {sig!r} does not match", payload=value)
+        raise BadSignature(f"Signature {sig!r} does not match")
+
+    def _extract_unsafe_payload(self, signed_value: str | bytes) -> bytes | None:
+        """Extract the payload without verifying the signature.
+
+        This is only used by the explicitly unsafe loading methods.
+        """
+        signed_value = want_bytes(signed_value)
+
+        if self.sep not in signed_value:
+            return None
+
+        return signed_value.rsplit(self.sep, 1)[0]
 
     def validate(self, signed_value: str | bytes) -> bool:
         """Only validates the given signed value. Returns ``True`` if

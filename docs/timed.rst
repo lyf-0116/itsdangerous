@@ -5,8 +5,8 @@ Signing With Timestamps
 
 If you want to expire signatures you can use the
 :class:`TimestampSigner` class which adds timestamp information and
-signs it. On unsigning you can validate that the timestamp is not older
-than a given age.
+signs it. Unsigning requires a maximum age, and the signature is
+rejected if its timestamp is older than that age.
 
 .. code-block:: python
 
@@ -20,6 +20,11 @@ than a given age.
     Traceback (most recent call last):
       ...
     itsdangerous.exc.SignatureExpired: Signature age 15 > 5 seconds
+
+The exception only reports metadata such as the signing time. It does
+not include the unverified payload. The same requirement applies to
+``TimedSerializer.loads``, ``loads_unsafe``, ``load``, and
+``load_unsafe``.
 
 .. autoclass:: TimestampSigner
     :members:

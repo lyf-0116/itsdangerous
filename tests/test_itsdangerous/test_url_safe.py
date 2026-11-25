@@ -19,6 +19,8 @@ class TestURLSafeSerializer(TestSerializer):
 
 
 class TestURLSafeTimedSerializer(TestURLSafeSerializer, TestTimedSerializer):
+    load_kwargs = {"max_age": 10}
+
     @pytest.fixture()
     def serializer_factory(self):
         return partial(URLSafeTimedSerializer, secret_key="secret-key")

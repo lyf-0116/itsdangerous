@@ -5,6 +5,12 @@ Unreleased
 
 -   Drop support for Python 3.8 and 3.9.
 -   Remove previously deprecated code.
+-   ``TimestampSigner.unsign`` and ``validate``, and
+    ``TimedSerializer.loads``, ``loads_unsafe``, ``load``, and
+    ``load_unsafe`` now require a ``max_age`` argument. Signatures are
+    no longer accepted without checking their age.
+-   ``BadSignature`` and its subclasses no longer store the unverified
+    payload on the exception.
 
 
 Version 2.2.0

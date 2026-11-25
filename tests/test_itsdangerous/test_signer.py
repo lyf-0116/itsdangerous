@@ -48,7 +48,7 @@ class TestSigner:
         with pytest.raises(BadSignature) as exc_info:
             signer.unsign(bad_signed)
 
-        assert exc_info.value.payload == b"b"
+        assert not hasattr(exc_info.value, "payload")
 
     def test_changed_value(self, signer):
         signed = signer.sign("my string")

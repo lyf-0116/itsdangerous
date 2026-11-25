@@ -361,6 +361,11 @@ class Serializer(t.Generic[_TSerialized]):
         pickle serializer).
 
         .. versionadded:: 0.15
+
+        .. versionchanged:: 2.3.0
+            When the signature is invalid, the unverified payload is
+            read directly for this explicitly unsafe method instead of
+            being stored on the exception.
         """
         return self._loads_unsafe_impl(s, salt)
 
@@ -379,20 +384,22 @@ class Serializer(t.Generic[_TSerialized]):
 
         try:
             return True, self.loads(s, salt=salt, **load_kwargs)
-        except BadSignature as e:
-            if e.payload is None:
-                return False, None
-
+        except BadSignature:
             if load_payload_kwargs is None:
                 load_payload_kwargs = {}
 
-            try:
-                return (
-                    False,
-                    self.load_payload(e.payload, **load_payload_kwargs),
-                )
-            except BadPayload:
-                return False, None
+            for signer in self.iter_unsigners(salt):
+                payload = signer._extract_unsafe_payload(s)
+
+                if payload is None:
+                    continue
+
+                try:
+                    return False, self.load_payload(payload, **load_payload_kwargs)
+                except BadPayload:
+                    continue
+
+            return False, None
 
     def load_unsafe(
         self, f: t.IO[t.Any], salt: str | bytes | None = None

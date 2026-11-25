@@ -36,42 +36,34 @@ To serialize to a format that is safe to use in URLs, see
 Responding to Failure
 ---------------------
 
-Exceptions have helpful attributes which allow you to inspect the
-payload if the signature check failed. This has to be done with extra
-care because at that point you know that someone tampered with your data
-but it might be useful for debugging purposes.
+Exceptions only contain metadata about the failure, such as the signing
+time on an expired signature. They do not contain the unverified
+payload, since that data may have been controlled by an attacker.
 
 .. code-block:: python
 
     from itsdangerous.serializer import Serializer
-    from itsdangerous.exc import BadSignature, BadData
+    from itsdangerous.exc import BadSignature
 
     s = URLSafeSerializer("secret-key")
-    decoded_payload = None
 
     try:
-        decoded_payload = s.loads(data)
+        payload = s.loads(data)
         # This payload is decoded and safe
-    except BadSignature as e:
-        if e.payload is not None:
-            try:
-                decoded_payload = s.load_payload(e.payload)
-            except BadData:
-                pass
-            # This payload is decoded but unsafe because someone
-            # tampered with the signature. The decode (load_payload)
-            # step is explicit because it might be unsafe to unserialize
-            # the payload (think pickle instead of json!)
+    except BadSignature:
+        # The input is untrusted. Do not decode or log its payload.
+        payload = None
 
-If you don't want to inspect attributes to figure out what exactly went
-wrong you can also use :meth:`~Serializer.loads_unsafe`:
+If you explicitly need to debug an invalid value, you can use
+:meth:`~Serializer.loads_unsafe`:
 
 .. code-block:: python
 
     sig_okay, payload = s.loads_unsafe(data)
 
 The first item in the returned tuple is a boolean that indicates if the
-signature was correct.
+signature was correct. The payload is returned even when the signature
+is invalid, so treat it as unsafe in that case.
 
 
 Fallback Signers
