@@ -175,9 +175,13 @@ class TimedSerializer(Serializer[_TSerialized]):
     default_signer: type[TimestampSigner] = TimestampSigner  # pyright: ignore
 
     def iter_unsigners(
-        self, salt: str | bytes | None = None
+        self,
+        salt: str | bytes | None = None,
+        now: datetime | int | float | None = None,
     ) -> cabc.Iterator[TimestampSigner]:
-        return t.cast("cabc.Iterator[TimestampSigner]", super().iter_unsigners(salt))
+        return t.cast(
+            "cabc.Iterator[TimestampSigner]", super().iter_unsigners(salt, now=now)
+        )
 
     # TODO: Signature is incompatible because parameters were added
     #  before salt.

@@ -92,6 +92,11 @@ unsigning with the current signer fails. Each item in the list can be:
     serializer.
 -   A tuple of ``(signer_class, signer_kwargs)`` to instantiate the
     given class with the given args.
+-   A tuple of ``(signer_class, signer_kwargs, expires_at)`` to stop
+    trying the fallback once the current time passes ``expires_at``.
+    ``expires_at`` can be a Unix timestamp or a timezone-aware
+    ``datetime``. ``signer_class`` can be ``None`` to use the
+    serializer's ``signer``.
 
 For example, this is a serializer that signs using SHA-512, but will
 unsign using either SHA-512 or SHA-1:
@@ -103,6 +108,23 @@ unsign using either SHA-512 or SHA-1:
         fallback_signers=[{"digest_method": hashlib.sha1}]
     )
 
+Giving a fallback an expiration lets a rotation schedule phase out old
+keys or parameters automatically. Old signatures validate during the
+transition period, and the fallback silently stops being tried once it
+expires, without requiring a coordinated config change:
+
+.. code-block:: python
+
+    s = Serializer(
+        secret_key=["old-key", "new-key"],
+        fallback_signers=[
+            (None, {"digest_method": hashlib.sha1}, datetime(2025, 1, 1, tzinfo=timezone.utc)),
+        ],
+    )
+
+The expiration is checked against the current time every time
+signatures are verified, so removing the entry from the list later is
+only cleanup, not a behavior change.
 
 
 API

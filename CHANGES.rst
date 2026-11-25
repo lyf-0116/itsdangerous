@@ -5,6 +5,11 @@ Unreleased
 
 -   Drop support for Python 3.8 and 3.9.
 -   Remove previously deprecated code.
+-   ``fallback_signers`` entries can be given as
+    ``(signer, signer_kwargs, expires_at)`` to stop trying a fallback
+    once the current time passes ``expires_at``. This lets key rotation
+    phase out old keys or signing parameters at a scheduled time instead
+    of requiring a coordinated config change.
 
 
 Version 2.2.0

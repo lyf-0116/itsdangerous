@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import collections.abc as cabc
 import json
+import time
 import typing as t
+from datetime import datetime
 
 from .encoding import want_bytes
 from .exc import BadPayload
@@ -19,6 +21,30 @@ if t.TYPE_CHECKING:
 else:
     # Still available at runtime on Python < 3.13, but without the default.
     _TSerialized = t.TypeVar("_TSerialized", bound=str | bytes)
+
+
+#: A single item in a ``fallback_signers`` list. See
+#: :attr:`Serializer.default_fallback_signers` for the allowed forms.
+_TFallbackSigner = (
+    dict[str, t.Any]
+    | tuple[type[Signer], dict[str, t.Any]]
+    | tuple[type[Signer] | None, dict[str, t.Any], datetime | int | float]
+    | type[Signer]
+)
+
+
+def _expiry_timestamp(value: datetime | int | float) -> float:
+    """Convert an ``expires_at`` value to a Unix timestamp. A
+    ``datetime`` must be timezone-aware so the comparison against the
+    current time is unambiguous.
+    """
+    if isinstance(value, datetime):
+        if value.tzinfo is None:
+            raise ValueError("The expires_at datetime must be timezone-aware.")
+
+        return value.timestamp()
+
+    return float(value)
 
 
 class _PDataSerializer(t.Protocol[_TSerialized]):
@@ -68,8 +94,16 @@ class Serializer(t.Generic[_TSerialized]):
     :param fallback_signers: List of signer parameters to try when
         unsigning with the default signer fails. Each item can be a dict
         of ``signer_kwargs``, a ``Signer`` class, or a tuple of
-        ``(signer, signer_kwargs)``. Defaults to
+        ``(signer, signer_kwargs)``. A tuple of
+        ``(signer, signer_kwargs, expires_at)`` stops trying that
+        fallback once the current time passes ``expires_at``, which can
+        be a Unix timestamp or a timezone-aware ``datetime``. ``signer``
+        can be ``None`` to use the configured ``signer``. Defaults to
         :attr:`default_fallback_signers`.
+
+    .. versionchanged:: 2.3
+        Fallback signers can be given an ``expires_at`` time after
+        which they are no longer tried.
 
     .. versionchanged:: 2.0
         Added support for key rotation by passing a list to
@@ -99,9 +133,7 @@ class Serializer(t.Generic[_TSerialized]):
     default_signer: type[Signer] = Signer
 
     #: The default fallback signers to try when unsigning fails.
-    default_fallback_signers: list[
-        dict[str, t.Any] | tuple[type[Signer], dict[str, t.Any]] | type[Signer]
-    ] = []
+    default_fallback_signers: list[_TFallbackSigner] = []
 
     # Serializer[str] if no data serializer is provided, or if it returns str.
     @t.overload
@@ -113,10 +145,7 @@ class Serializer(t.Generic[_TSerialized]):
         serializer_kwargs: dict[str, t.Any] | None = None,
         signer: type[Signer] | None = None,
         signer_kwargs: dict[str, t.Any] | None = None,
-        fallback_signers: list[
-            dict[str, t.Any] | tuple[type[Signer], dict[str, t.Any]] | type[Signer]
-        ]
-        | None = None,
+        fallback_signers: list[_TFallbackSigner] | None = None,
     ): ...
 
     # Serializer[bytes] with a bytes data serializer positional argument.
@@ -129,10 +158,7 @@ class Serializer(t.Generic[_TSerialized]):
         serializer_kwargs: dict[str, t.Any] | None = None,
         signer: type[Signer] | None = None,
         signer_kwargs: dict[str, t.Any] | None = None,
-        fallback_signers: list[
-            dict[str, t.Any] | tuple[type[Signer], dict[str, t.Any]] | type[Signer]
-        ]
-        | None = None,
+        fallback_signers: list[_TFallbackSigner] | None = None,
     ): ...
 
     # Serializer[bytes] with a bytes data serializer keyword argument.
@@ -146,10 +172,7 @@ class Serializer(t.Generic[_TSerialized]):
         serializer_kwargs: dict[str, t.Any] | None = None,
         signer: type[Signer] | None = None,
         signer_kwargs: dict[str, t.Any] | None = None,
-        fallback_signers: list[
-            dict[str, t.Any] | tuple[type[Signer], dict[str, t.Any]] | type[Signer]
-        ]
-        | None = None,
+        fallback_signers: list[_TFallbackSigner] | None = None,
     ): ...
 
     # Fall back with a positional argument. If the strict signature of
@@ -164,10 +187,7 @@ class Serializer(t.Generic[_TSerialized]):
         serializer_kwargs: dict[str, t.Any] | None = None,
         signer: type[Signer] | None = None,
         signer_kwargs: dict[str, t.Any] | None = None,
-        fallback_signers: list[
-            dict[str, t.Any] | tuple[type[Signer], dict[str, t.Any]] | type[Signer]
-        ]
-        | None = None,
+        fallback_signers: list[_TFallbackSigner] | None = None,
     ): ...
 
     # Fall back with a keyword argument.
@@ -181,10 +201,7 @@ class Serializer(t.Generic[_TSerialized]):
         serializer_kwargs: dict[str, t.Any] | None = None,
         signer: type[Signer] | None = None,
         signer_kwargs: dict[str, t.Any] | None = None,
-        fallback_signers: list[
-            dict[str, t.Any] | tuple[type[Signer], dict[str, t.Any]] | type[Signer]
-        ]
-        | None = None,
+        fallback_signers: list[_TFallbackSigner] | None = None,
     ): ...
 
     def __init__(
@@ -195,10 +212,7 @@ class Serializer(t.Generic[_TSerialized]):
         serializer_kwargs: dict[str, t.Any] | None = None,
         signer: type[Signer] | None = None,
         signer_kwargs: dict[str, t.Any] | None = None,
-        fallback_signers: list[
-            dict[str, t.Any] | tuple[type[Signer], dict[str, t.Any]] | type[Signer]
-        ]
-        | None = None,
+        fallback_signers: list[_TFallbackSigner] | None = None,
     ):
         #: The list of secret keys to try for verifying signatures, from
         #: oldest to newest. The newest (last) key is used for signing.
@@ -228,9 +242,7 @@ class Serializer(t.Generic[_TSerialized]):
         if fallback_signers is None:
             fallback_signers = list(self.default_fallback_signers)
 
-        self.fallback_signers: list[
-            dict[str, t.Any] | tuple[type[Signer], dict[str, t.Any]] | type[Signer]
-        ] = fallback_signers
+        self.fallback_signers: list[_TFallbackSigner] = fallback_signers
         self.serializer_kwargs: dict[str, t.Any] = serializer_kwargs or {}
 
     @property
@@ -284,27 +296,59 @@ class Serializer(t.Generic[_TSerialized]):
 
         return self.signer(self.secret_keys, salt=salt, **self.signer_kwargs)
 
-    def iter_unsigners(self, salt: str | bytes | None = None) -> cabc.Iterator[Signer]:
+    def iter_unsigners(
+        self,
+        salt: str | bytes | None = None,
+        now: datetime | int | float | None = None,
+    ) -> cabc.Iterator[Signer]:
         """Iterates over all signers to be tried for unsigning. Starts
         with the configured signer, then constructs each signer
         specified in ``fallback_signers``.
+
+        A fallback signer configured with an ``expires_at`` time is
+        skipped once that time has passed. ``now`` is the time those
+        expirations are checked against, defaulting to the current
+        time. It can be a Unix timestamp or a timezone-aware
+        ``datetime``. The check happens on every call, so an expired
+        fallback stops being used without changing the configuration.
+
+        .. versionchanged:: 2.3
+            Added the ``now`` parameter, and support for fallback
+            signers with an ``expires_at`` time.
         """
         if salt is None:
             salt = self.salt
 
         yield self.make_signer(salt)
 
+        if now is None:
+            now_ts = time.time()
+        else:
+            now_ts = _expiry_timestamp(now)
+
         for fallback in self.fallback_signers:
+            expires_at: datetime | int | float | None = None
+
             if isinstance(fallback, dict):
+                signer_class = None
                 kwargs = fallback
-                fallback = self.signer
             elif isinstance(fallback, tuple):
-                fallback, kwargs = fallback
+                if len(fallback) == 3:
+                    signer_class, kwargs, expires_at = fallback
+                else:
+                    signer_class, kwargs = fallback
             else:
+                signer_class = fallback
                 kwargs = self.signer_kwargs
 
+            if signer_class is None:
+                signer_class = self.signer
+
+            if expires_at is not None and now_ts >= _expiry_timestamp(expires_at):
+                continue
+
             for secret_key in self.secret_keys:
-                yield fallback(secret_key, salt=salt, **kwargs)
+                yield signer_class(secret_key, salt=salt, **kwargs)
 
     def dumps(self, obj: t.Any, salt: str | bytes | None = None) -> _TSerialized:
         """Returns a signed string serialized with the internal

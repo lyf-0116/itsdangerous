@@ -1,5 +1,9 @@
 import hashlib
 import pickle
+import time
+from datetime import datetime
+from datetime import timedelta
+from datetime import timezone
 from functools import partial
 from io import BytesIO
 from io import StringIO
@@ -181,6 +185,68 @@ class TestSerializer:
 
         for signer in unsigners:
             assert signer.digest_method == hashlib.sha256
+
+    def test_fallback_signer_expires(self, serializer_factory, value: Any):
+        serializer = serializer_factory(signer_kwargs={"digest_method": hashlib.sha256})
+        signed = serializer.dumps(value)
+
+        fallback_serializer = serializer_factory(
+            signer_kwargs={"digest_method": hashlib.sha1},
+            fallback_signers=[
+                (None, {"digest_method": hashlib.sha256}, time.time() + 60),
+            ],
+        )
+
+        assert fallback_serializer.loads(signed) == value
+
+    def test_fallback_signer_expired(self, serializer_factory, value: Any):
+        serializer = serializer_factory(signer_kwargs={"digest_method": hashlib.sha256})
+        signed = serializer.dumps(value)
+
+        fallback_serializer = serializer_factory(
+            signer_kwargs={"digest_method": hashlib.sha1},
+            fallback_signers=[
+                (None, {"digest_method": hashlib.sha256}, time.time() - 60),
+            ],
+        )
+
+        with pytest.raises(BadSignature):
+            fallback_serializer.loads(signed)
+
+    def test_fallback_signer_expires_datetime(self, serializer_factory, value: Any):
+        serializer = serializer_factory(signer_kwargs={"digest_method": hashlib.sha256})
+        signed = serializer.dumps(value)
+
+        fallback_serializer = serializer_factory(
+            signer_kwargs={"digest_method": hashlib.sha1},
+            fallback_signers=[
+                (
+                    None,
+                    {"digest_method": hashlib.sha256},
+                    datetime.now(timezone.utc) + timedelta(seconds=60),
+                ),
+            ],
+        )
+
+        assert fallback_serializer.loads(signed) == value
+
+    def test_fallback_signer_expires_now(self, serializer_factory):
+        serializer = serializer_factory(
+            fallback_signers=[(None, {"digest_method": hashlib.sha256}, 100)],
+        )
+
+        assert len(list(serializer.iter_unsigners(now=50))) == 2
+        assert len(list(serializer.iter_unsigners(now=100))) == 1
+
+    def test_fallback_signer_naive_expires(self, serializer_factory):
+        serializer = serializer_factory(
+            fallback_signers=[
+                (None, {"digest_method": hashlib.sha256}, datetime.now())
+            ],
+        )
+
+        with pytest.raises(ValueError, match="timezone-aware"):
+            list(serializer.iter_unsigners())
 
 
 def test_digests():
